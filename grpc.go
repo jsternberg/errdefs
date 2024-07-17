@@ -17,8 +17,12 @@
 package errdefs
 
 import (
+	"context"
 	"fmt"
+	"strconv"
+	"strings"
 
+	"github.com/containerd/errdefs/internal/cause"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -79,7 +83,103 @@ func ToGRPCf(err error, format string, args ...interface{}) error {
 	return ToGRPC(fmt.Errorf("%s: %w", fmt.Sprintf(format, args...), err))
 }
 
+// FromGRPC returns the underlying error from a grpc service based on the grpc error code
+func FromGRPC(err error) error {
+	if err == nil {
+		return nil
+	}
+
+	desc := errDesc(err)
+
+	var cls error // divide these into error classes, becomes the cause
+
+	switch code(err) {
+	case codes.InvalidArgument:
+		cls = ErrInvalidArgument
+	case codes.AlreadyExists:
+		cls = ErrAlreadyExists
+	case codes.NotFound:
+		cls = ErrNotFound
+	case codes.Unavailable:
+		cls = ErrUnavailable
+	case codes.FailedPrecondition:
+		if desc == ErrConflict.Error() || strings.HasSuffix(desc, ": "+ErrConflict.Error()) {
+			cls = ErrConflict
+		} else if desc == ErrNotModified.Error() || strings.HasSuffix(desc, ": "+ErrNotModified.Error()) {
+			cls = ErrNotModified
+		} else {
+			cls = ErrFailedPrecondition
+		}
+	case codes.Unimplemented:
+		cls = ErrNotImplemented
+	case codes.Canceled:
+		cls = context.Canceled
+	case codes.DeadlineExceeded:
+		cls = context.DeadlineExceeded
+	case codes.Aborted:
+		cls = ErrAborted
+	case codes.Unauthenticated:
+		cls = ErrUnauthenticated
+	case codes.PermissionDenied:
+		cls = ErrPermissionDenied
+	case codes.Internal:
+		cls = ErrInternal
+	case codes.DataLoss:
+		cls = ErrDataLoss
+	case codes.OutOfRange:
+		cls = ErrOutOfRange
+	case codes.ResourceExhausted:
+		cls = ErrResourceExhausted
+	default:
+		if idx := strings.LastIndex(desc, cause.UnexpectedStatusPrefix); idx > 0 {
+			if status, err := strconv.Atoi(desc[idx+len(cause.UnexpectedStatusPrefix):]); err == nil && status >= 200 && status < 600 {
+				cls = cause.ErrUnexpectedStatus{Status: status}
+			}
+		}
+		if cls == nil {
+			cls = ErrUnknown
+		}
+	}
+
+	msg := rebaseMessage(cls, desc)
+	if msg != "" {
+		err = fmt.Errorf("%s: %w", msg, cls)
+	} else {
+		err = cls
+	}
+
+	return err
+}
+
+// rebaseMessage removes the repeats for an error at the end of an error
+// string. This will happen when taking an error over grpc then remapping it.
+//
+// Effectively, we just remove the string of cls from the end of err if it
+// appears there.
+func rebaseMessage(cls error, desc string) string {
+	clss := cls.Error()
+	if desc == clss {
+		return ""
+	}
+
+	return strings.TrimSuffix(desc, ": "+clss)
+}
+
 func isGRPCError(err error) bool {
 	_, ok := status.FromError(err)
 	return ok
+}
+
+func code(err error) codes.Code {
+	if s, ok := status.FromError(err); ok {
+		return s.Code()
+	}
+	return codes.Unknown
+}
+
+func errDesc(err error) string {
+	if s, ok := status.FromError(err); ok {
+		return s.Message()
+	}
+	return err.Error()
 }
