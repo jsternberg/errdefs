@@ -88,7 +88,7 @@ func TestHelpers(t *testing.T) {
 
 func testHelper(msg string, withHelper bool) error {
 	if withHelper {
-		return Join(errors.New(msg), Callers(2))
+		return Join(errors.New(msg), callers(2))
 	} else {
 		return Join(errors.New(msg), ErrStack())
 	}
