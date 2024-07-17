@@ -173,8 +173,12 @@ func (e *stack) CollapseError() {}
 // ErrStack is a convenience method for calling callers
 // with the correct skip value for non-helper functions
 // directly calling this package.
-func ErrStack() error {
-	return callers(3)
+func ErrStack(skip ...int) error {
+	var n int
+	if len(skip) > 0 {
+		n = skip[0]
+	}
+	return callers(n + 3)
 }
 
 // Errorf creates a new error with the given format and
